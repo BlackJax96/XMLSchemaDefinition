@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <Authors>David Eddy</Authors>
+    <Description>A library that allows you to define a schema that can be used to read and write XML files without writing any of your own methods.</Description>
+    <PackageProjectUrl></PackageProjectUrl>
+    <RepositoryUrl>https://github.com/BlackJax96/XMLSchemaDefinition</RepositoryUrl>
+    <Product>XML Schema Definition</Product>
+    <PackageTags>xml schema definition C# csharp reader writer serialize deserialize import export</PackageTags>
+    <PackageLicenseUrl>https://github.com/BlackJax96/XMLSchemaDefinition/blob/master/LICENSE</PackageLicenseUrl>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <WarningsAsErrors />
+    <NoWarn />
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <DocumentationFile></DocumentationFile>
+  </PropertyGroup>
+
+</Project>
