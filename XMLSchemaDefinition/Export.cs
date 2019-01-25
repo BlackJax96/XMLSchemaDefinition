@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -26,24 +27,24 @@ namespace XMLSchemaDefinition
 
         #region Async
 
-        public async Task ExportAsync(string path, T rootElement)
-            => await ExportAsync(path, rootElement, Encoding.UTF8, null, CancellationToken.None);
+        public async Task ExportAsync(string path, T file)
+            => await ExportAsync(path, file, Encoding.UTF8, null, CancellationToken.None);
 
         public async Task ExportAsync(
             string path,
-            T rootElement,
+            T file,
             Encoding textEncoding,
             IProgress<float> progress,
             CancellationToken cancel)
         {
             XmlWriterSettings settings = GetDefaultWriterSettings();
             settings.Encoding = textEncoding;
-            await ExportAsync(path, rootElement, settings, progress, cancel);
+            await ExportAsync(path, file, settings, progress, cancel);
         }
 
         public async Task ExportAsync(
             string path,
-            T rootElement,
+            T file,
             XmlWriterSettings settings,
             IProgress<float> progress,
             CancellationToken cancel)
@@ -52,66 +53,75 @@ namespace XMLSchemaDefinition
                 settings = GetDefaultWriterSettings();
             
             settings.Async = true;
-            using (FileStream stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
-            using (XmlWriter writer = XmlWriter.Create(stream, settings))
+
+            long currentBytes = 0L;
+            using (ProgressStream f = new ProgressStream(new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None), null, null))
+            using (XmlWriter r = XmlWriter.Create(f, settings))
             {
-                await writer.WriteStartDocumentAsync();
-                await WriteElementAsync(rootElement, writer, stream, progress, cancel);
-                await writer.WriteEndDocumentAsync();
+                if (progress != null)
+                {
+                    float length = f.Length;
+                    f.SetWriteProgress(new BasicProgress<int>(i =>
+                    {
+                        currentBytes += i;
+                        progress.Report(currentBytes / length);
+                    }));
+                }
+                await ExportAsync(file, r, cancel);
             }
         }
-
-        //TODO:
-        //I don't think this line reports progress very well when the XmlWriter is in async mode:
-        //progress?.Report((float)stream.Position / stream.Length);
-        //Report progress by amount of elements and attributes written instead
-
+        private async Task ExportAsync(T file, XmlWriter writer, CancellationToken cancel)
+        {
+            await writer.WriteStartDocumentAsync();
+            await WriteElementAsync(file, writer, cancel);
+            await writer.WriteEndDocumentAsync();
+        }
         private async Task WriteElementAsync(
             IElement element,
             XmlWriter writer,
-            FileStream stream,
-            IProgress<float> progress,
             CancellationToken cancel)
         {
-            if (!cancel.IsCancellationRequested)
+            if (cancel.IsCancellationRequested)
+                return;
+
+            Type elementType = element.GetType();
+            BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            List<MemberInfo> members = elementType.GetMembers(flags).Where(x => x.GetCustomAttribute<Attr>() != null).ToList();
+
+            int xmlnsIndex = members.FindIndex(x => x.GetCustomAttribute<Attr>().AttributeName == "xmlns");
+            if (xmlnsIndex >= 0)
             {
+                MemberInfo member = members[xmlnsIndex];
+                object value = member is PropertyInfo prop ? prop.GetValue(element) : (member is FieldInfo field ? field.GetValue(element) : null);
+                members.RemoveAt(xmlnsIndex);
+                await writer.WriteStartElementAsync(null, element.ElementName, value.ToString());
+            }
+            else
                 await writer.WriteStartElementAsync(null, element.ElementName, null);
-                progress?.Report((float)stream.Position / stream.Length);
 
-                Type elementType = element.GetType();
-                BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-                MemberInfo[] members = elementType.GetMembers(flags).
-                    Where(x => x.GetCustomAttribute<Attr>() != null).ToArray();
+            foreach (MemberInfo member in members)
+            {
+                Attr attr = member.GetCustomAttribute<Attr>();
+                object value = member is PropertyInfo prop ? prop.GetValue(element) : (member is FieldInfo field ? field.GetValue(element) : null);
+                if (!attr.Required && value == elementType.GetDefaultValue())
+                    continue;
 
-                foreach (MemberInfo member in members)
+                await writer.WriteAttributeStringAsync(null, attr.AttributeName, null, value.ToString());
+
+                if (cancel.IsCancellationRequested)
+                    return;
+            }
+            if (element is IStringElement stringEntry)
+            {
+                string value = stringEntry.GenericStringContent.WriteToString();
+                await writer.WriteStringAsync(value);
+            }
+            else
+            {
+                var orderedChildren = element.ChildElements.Values.SelectMany(x => x).OrderBy(x => x.ElementIndex);
+                foreach (IElement child in orderedChildren)
                 {
-                    Attr attr = member.GetCustomAttribute<Attr>();
-                    object value = member is PropertyInfo prop ? prop.GetValue(element) : (member is FieldInfo field ? field.GetValue(element) : null);
-                    if (!attr.Required && value == elementType.GetDefaultValue())
-                        continue;
-
-                    await writer.WriteAttributeStringAsync(null, attr.AttributeName, null, value.ToString());
-
-                    if (cancel.IsCancellationRequested)
-                        break;
-                    else
-                        progress?.Report((float)stream.Position / stream.Length);
-                }
-                if (!cancel.IsCancellationRequested)
-                {
-                    if (element is IStringElement stringEntry)
-                    {
-                        string value = stringEntry.GenericStringContent.WriteToString();
-                        await writer.WriteStringAsync(value);
-
-                        progress?.Report((float)stream.Position / stream.Length);
-                    }
-                    else
-                    {
-                        IOrderedEnumerable<IElement> orderedChildren = element.ChildElements.Values.SelectMany(x => x).OrderBy(x => x.ElementIndex);
-                        foreach (IElement child in orderedChildren)
-                            await WriteElementAsync(child, writer, stream, progress, cancel);
-                    }
+                    await WriteElementAsync(child, writer, cancel);
                 }
             }
             await writer.WriteEndElementAsync();
